@@ -1,0 +1,336 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+)
+
+type MCPServer struct {
+	client *futabusClient
+}
+
+type MCPRequest struct {
+	Jsonrpc string          `json:"jsonrpc"`
+	ID      interface{}     `json:"id"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type MCPResponse struct {
+	Jsonrpc string      `json:"jsonrpc"`
+	ID      interface{} `json:"id"`
+	Result  interface{} `json:"result,omitempty"`
+	Error   *MCPError   `json:"error,omitempty"`
+}
+
+type MCPError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func NewMCPServer() *MCPServer {
+	return &MCPServer{
+		client: NewFutabusClient(),
+	}
+}
+
+func (s *MCPServer) handleRequest(req MCPRequest) MCPResponse {
+	switch req.Method {
+	case "initialize":
+		return s.handleInitialize(req)
+	case "tools/list":
+		return s.handleToolsList(req)
+	case "tools/call":
+		return s.handleToolsCall(req)
+	default:
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Error: &MCPError{
+				Code:    -32601,
+				Message: fmt.Sprintf("Method not found: %s", req.Method),
+			},
+		}
+	}
+}
+
+func (s *MCPServer) handleInitialize(req MCPRequest) MCPResponse {
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities": map[string]interface{}{
+				"tools": map[string]interface{}{},
+			},
+			"serverInfo": map[string]string{
+				"name":    "mcp-futabus",
+				"version": "1.0.0",
+			},
+		},
+	}
+}
+
+func (s *MCPServer) handleToolsList(req MCPRequest) MCPResponse {
+	tools := []map[string]interface{}{
+		{
+			"name":        "get_origin_codes",
+			"description": "Get all available origin codes for bus routes",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "get_routes",
+			"description": "Get routes between origin and destination",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"originCode": map[string]string{"type": "string", "description": "Origin code"},
+					"destCode":   map[string]string{"type": "string", "description": "Destination code"},
+					"fromId":     map[string]string{"type": "integer", "description": "Id of origin office"},
+					"toId":       map[string]string{"type": "integer", "description": "Id of destination office"},
+				},
+				"required": []string{"originCode", "destCode", "fromId", "toId"},
+			},
+		},
+		{
+			"name":        "search_trips",
+			"description": "Search for available trips",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"routeIds":    map[string]interface{}{"type": "array", "items": map[string]string{"type": "integer"}},
+					"fromTime":    map[string]string{"type": "integer", "description": "Start time in milliseconds (current year is 2025)"},
+					"toTime":      map[string]string{"type": "integer", "description": "End time in milliseconds (current year is 2025)"},
+					"ticketCount": map[string]string{"type": "integer", "description": "Number of tickets"},
+				},
+				"required": []string{"routeIds", "fromTime", "toTime", "ticketCount"},
+			},
+		},
+		{
+			"name":        "get_price_list",
+			"description": "Get minimum prices for routes within a date range",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"routeIds": map[string]interface{}{"type": "array", "items": map[string]string{"type": "integer"}},
+					"fromDate": map[string]string{"type": "string", "description": "Start date (MM-DD-YYYY)"},
+					"toDate":   map[string]string{"type": "string", "description": "End date (MM-DD-YYYY)"},
+				},
+				"required": []string{"routeIds", "fromDate", "toDate"},
+			},
+		},
+	}
+
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      req.ID,
+		Result: map[string]interface{}{
+			"tools": tools,
+		},
+	}
+}
+
+func (s *MCPServer) handleToolsCall(req MCPRequest) MCPResponse {
+	var params struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Error:   &MCPError{Code: -32602, Message: "Invalid params"},
+		}
+	}
+
+	switch params.Name {
+	case "get_origin_codes":
+		return s.callGetOriginCodes(req.ID)
+	case "get_routes":
+		return s.callGetRoutes(req.ID, params.Arguments)
+	case "search_trips":
+		return s.callSearchTrips(req.ID, params.Arguments)
+	case "get_price_list":
+		return s.callGetPriceList(req.ID, params.Arguments)
+	default:
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      req.ID,
+			Error:   &MCPError{Code: -32601, Message: "Tool not found"},
+		}
+	}
+}
+
+func (s *MCPServer) callGetOriginCodes(id interface{}) MCPResponse {
+	codes, err := s.client.getAllOriginCodes()
+	if err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32000, Message: err.Error()},
+		}
+	}
+
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": fmt.Sprintf("%v", codes),
+				},
+			},
+		},
+	}
+}
+
+func (s *MCPServer) callGetRoutes(id interface{}, args json.RawMessage) MCPResponse {
+	var params struct {
+		OriginCode string `json:"originCode"`
+		DestCode   string `json:"destCode"`
+		FromId     int    `json:"fromId"`
+		ToId       int    `json:"toId"`
+	}
+
+	if err := json.Unmarshal(args, &params); err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
+		}
+	}
+
+	result, err := s.client.getRoutes(getRouteRequest{
+		OriginCode: params.OriginCode,
+		DestCode:   params.DestCode,
+		FromId:     params.FromId,
+		ToId:       params.ToId,
+	})
+
+	if err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32000, Message: err.Error()},
+		}
+	}
+
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": string(result),
+				},
+			},
+		},
+	}
+}
+
+func (s *MCPServer) callSearchTrips(id interface{}, args json.RawMessage) MCPResponse {
+	var params struct {
+		RouteIds    []int `json:"routeIds"`
+		FromTime    int64 `json:"fromTime"`
+		ToTime      int64 `json:"toTime"`
+		TicketCount int   `json:"ticketCount"`
+	}
+
+	if err := json.Unmarshal(args, &params); err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
+		}
+	}
+
+	result, err := s.client.searchTrips(params.RouteIds, params.FromTime, params.ToTime, params.TicketCount)
+
+	if err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32000, Message: err.Error()},
+		}
+	}
+
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": string(result),
+				},
+			},
+		},
+	}
+}
+
+func (s *MCPServer) callGetPriceList(id interface{}, args json.RawMessage) MCPResponse {
+	var params struct {
+		RouteIds []int  `json:"routeIds"`
+		FromDate string `json:"fromDate"`
+		ToDate   string `json:"toDate"`
+	}
+
+	if err := json.Unmarshal(args, &params); err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
+		}
+	}
+
+	result, err := s.client.getPriceListByRoutes(params.RouteIds, params.FromDate, params.ToDate)
+
+	if err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32000, Message: err.Error()},
+		}
+	}
+
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": string(result),
+				},
+			},
+		},
+	}
+}
+
+func (s *MCPServer) Run() error {
+	decoder := json.NewDecoder(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+
+	for {
+		var req MCPRequest
+		if err := decoder.Decode(&req); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("error decoding request: %v", err)
+		}
+
+		resp := s.handleRequest(req)
+		if err := encoder.Encode(resp); err != nil {
+			return fmt.Errorf("error encoding response: %v", err)
+		}
+	}
+}
