@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 )
 
 type MCPServer struct {
@@ -103,12 +104,18 @@ func (s *MCPServer) handleToolsList(req MCPRequest) MCPResponse {
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"routeIds":    map[string]interface{}{"type": "array", "items": map[string]string{"type": "integer"}},
-					"fromTime":    map[string]string{"type": "integer", "description": "Start time in milliseconds (current year is 2025)"},
-					"toTime":      map[string]string{"type": "integer", "description": "End time in milliseconds (current year is 2025)"},
+					"routeIds": map[string]interface{}{"type": "array", "items": map[string]string{"type": "integer"}},
+					"fromDate": map[string]string{
+						"type":        "string",
+						"description": "Start date and time in format YYYY-MM-DD HH:MM (e.g., 2024-01-01 08:00)",
+					},
+					"toDate": map[string]string{
+						"type":        "string",
+						"description": "End date and time in format YYYY-MM-DD HH:MM (e.g., 2024-01-02 20:00)",
+					},
 					"ticketCount": map[string]string{"type": "integer", "description": "Number of tickets"},
 				},
-				"required": []string{"routeIds", "fromTime", "toTime", "ticketCount"},
+				"required": []string{"routeIds", "fromDate", "toDate", "ticketCount"},
 			},
 		},
 		{
@@ -236,12 +243,21 @@ func (s *MCPServer) callGetRoutes(id interface{}, args json.RawMessage) MCPRespo
 	}
 }
 
+func parseDateTime(dateStr string) (int64, error) {
+	layout := "2006-01-02 15:04"
+	t, err := time.Parse(layout, dateStr)
+	if err != nil {
+		return 0, err
+	}
+	return t.UnixMilli(), nil
+}
+
 func (s *MCPServer) callSearchTrips(id interface{}, args json.RawMessage) MCPResponse {
 	var params struct {
-		RouteIds    []int `json:"routeIds"`
-		FromTime    int64 `json:"fromTime"`
-		ToTime      int64 `json:"toTime"`
-		TicketCount int   `json:"ticketCount"`
+		RouteIds    []int  `json:"routeIds"`
+		FromDate    string `json:"fromDate"`
+		ToDate      string `json:"toDate"`
+		TicketCount int    `json:"ticketCount"`
 	}
 
 	if err := json.Unmarshal(args, &params); err != nil {
@@ -252,7 +268,26 @@ func (s *MCPServer) callSearchTrips(id interface{}, args json.RawMessage) MCPRes
 		}
 	}
 
-	result, err := s.client.searchTrips(params.RouteIds, params.FromTime, params.ToTime, params.TicketCount)
+	// Parse date strings to timestamps
+	fromTime, err := parseDateTime(params.FromDate)
+	if err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32602, Message: fmt.Sprintf("Invalid fromDate format: %v", err)},
+		}
+	}
+
+	toTime, err := parseDateTime(params.ToDate)
+	if err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32602, Message: fmt.Sprintf("Invalid toDate format: %v", err)},
+		}
+	}
+
+	result, err := s.client.searchTrips(params.RouteIds, fromTime, toTime, params.TicketCount)
 
 	if err != nil {
 		return MCPResponse{
