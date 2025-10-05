@@ -2,23 +2,39 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
+	"time"
 )
 
+type tokenCache struct {
+	token     string
+	expiresAt time.Time
+}
+
 type futabusClient struct {
+	cache *tokenCache
 }
 
 // NewFutabusClient creates a new instance of futabusClient
 func NewFutabusClient() *futabusClient {
-	return &futabusClient{}
+	return &futabusClient{
+		cache: &tokenCache{},
+	}
 }
 
 func (c *futabusClient) getToken() string {
+	// Check if cached token is still valid
+	if c.cache.token != "" && time.Now().Before(c.cache.expiresAt) {
+		return c.cache.token
+	}
+
 	resp, err := http.Get("https://futabus.vn")
 	if err != nil {
 		fmt.Printf("Error fetching page: %v\n", err)
@@ -58,7 +74,44 @@ func (c *futabusClient) getToken() string {
 		return ""
 	}
 
-	return data.Props.PageProps.Token
+	token := data.Props.PageProps.Token
+
+	// Parse JWT to get expiration time
+	if expiresAt := c.parseJWTExpiration(token); !expiresAt.IsZero() {
+		c.cache.token = token
+		// Subtract 5 minutes as buffer to refresh before actual expiry
+		c.cache.expiresAt = expiresAt.Add(-5 * time.Minute)
+	}
+
+	return token
+}
+
+// parseJWTExpiration extracts the expiration time from a JWT token
+func (c *futabusClient) parseJWTExpiration(token string) time.Time {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}
+	}
+
+	// Decode the payload (second part)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}
+	}
+
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return time.Time{}
+	}
+
+	if claims.Exp == 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(claims.Exp, 0)
 }
 
 func (c *futabusClient) searchTrips(routeIDs []int, fromTime, toTime int64, ticketCount int) ([]byte, error) {
