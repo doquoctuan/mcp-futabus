@@ -1,0 +1,11 @@
+{
+    "chat.mcp.serverSampling": {
+        "mcp-futabus/.vscode/mcp.json: mcp-futabus": {
+            "allowedModels": [
+                "copilot/claude-3.7-sonnet-thought",
+                "copilot/gpt-4o",
+                "copilot/gpt-5"
+            ]
+        }
+    }
+}

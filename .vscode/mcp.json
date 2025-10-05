@@ -3,7 +3,7 @@
     "mcp-futabus": {
       "command": "go",
       "args": ["run", "."],
-      "cwd": "/Users/tuandoquoc/sources/mcp-futabus"
+      "cwd": "${workspaceFolder}"
     }
   }
 }
