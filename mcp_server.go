@@ -124,6 +124,44 @@ func (s *MCPServer) handleToolsList(req MCPRequest) MCPResponse {
 				"required": []string{"routeIds", "fromDate", "toDate"},
 			},
 		},
+		{
+			"name":        "get_office_group",
+			"description": "Get office groups for specific routes",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"routeIds": map[string]interface{}{"type": "array", "items": map[string]string{"type": "integer"}},
+				},
+				"required": []string{"routeIds"},
+			},
+		},
+		{
+			"name":        "get_booking_stops",
+			"description": "Get booking stops for a specific route",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"routeId": map[string]string{"type": "integer", "description": "Route ID"},
+					"wayId":   map[string]string{"type": "integer", "description": "Way ID"},
+				},
+				"required": []string{"routeId", "wayId"},
+			},
+		},
+		{
+			"name":        "get_booking_seats",
+			"description": "Get available seats for a specific trip",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"routeId":       map[string]string{"type": "integer", "description": "Route ID"},
+					"tripId":        map[string]string{"type": "integer", "description": "Trip ID"},
+					"departureDate": map[string]string{"type": "string", "description": "Departure date"},
+					"departureTime": map[string]string{"type": "string", "description": "Departure time"},
+					"kind":          map[string]string{"type": "string", "description": "Kind of booking"},
+				},
+				"required": []string{"routeId", "tripId", "departureDate", "departureTime", "kind"},
+			},
+		},
 	}
 
 	return MCPResponse{
@@ -158,6 +196,12 @@ func (s *MCPServer) handleToolsCall(req MCPRequest) MCPResponse {
 		return s.callSearchTrips(req.ID, params.Arguments)
 	case "get_price_list":
 		return s.callGetPriceList(req.ID, params.Arguments)
+	case "get_office_group":
+		return s.callGetOfficeGroup(req.ID, params.Arguments)
+	case "get_booking_stops":
+		return s.callGetBookingStops(req.ID, params.Arguments)
+	case "get_booking_seats":
+		return s.callGetBookingSeats(req.ID, params.Arguments)
 	default:
 		return MCPResponse{
 			Jsonrpc: "2.0",
@@ -292,6 +336,122 @@ func (s *MCPServer) callGetPriceList(id interface{}, args json.RawMessage) MCPRe
 	}
 
 	result, err := s.client.getPriceListByRoutes(params.RouteIds, params.FromDate, params.ToDate)
+
+	if err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32000, Message: err.Error()},
+		}
+	}
+
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": string(result),
+				},
+			},
+		},
+	}
+}
+
+func (s *MCPServer) callGetOfficeGroup(id interface{}, args json.RawMessage) MCPResponse {
+	var params struct {
+		RouteIds []int `json:"routeIds"`
+	}
+
+	if err := json.Unmarshal(args, &params); err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
+		}
+	}
+
+	result, err := s.client.getOfficeGroupByRoutes(params.RouteIds)
+
+	if err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32000, Message: err.Error()},
+		}
+	}
+
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": string(result),
+				},
+			},
+		},
+	}
+}
+
+func (s *MCPServer) callGetBookingStops(id interface{}, args json.RawMessage) MCPResponse {
+	var params struct {
+		RouteId int `json:"routeId"`
+		WayId   int `json:"wayId"`
+	}
+
+	if err := json.Unmarshal(args, &params); err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
+		}
+	}
+
+	result, err := s.client.getBookingStops(params.RouteId, params.WayId)
+
+	if err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32000, Message: err.Error()},
+		}
+	}
+
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": string(result),
+				},
+			},
+		},
+	}
+}
+
+func (s *MCPServer) callGetBookingSeats(id interface{}, args json.RawMessage) MCPResponse {
+	var params struct {
+		RouteId       int    `json:"routeId"`
+		TripId        int    `json:"tripId"`
+		DepartureDate string `json:"departureDate"`
+		DepartureTime string `json:"departureTime"`
+		Kind          string `json:"kind"`
+	}
+
+	if err := json.Unmarshal(args, &params); err != nil {
+		return MCPResponse{
+			Jsonrpc: "2.0",
+			ID:      id,
+			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
+		}
+	}
+
+	result, err := s.client.getBookingSeats(params.RouteId, params.TripId, params.DepartureDate, params.DepartureTime, params.Kind)
 
 	if err != nil {
 		return MCPResponse{

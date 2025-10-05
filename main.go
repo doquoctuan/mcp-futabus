@@ -233,6 +233,102 @@ func (c *futabusClient) getAllOriginCodes() ([]responseOriginCode, error) {
 	return codes, nil
 }
 
+func (c *futabusClient) getOfficeGroupByRoutes(routeIDs []int) ([]byte, error) {
+	endpoint := "https://api.futabus.vn/metadata/office/office-group"
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %v", err)
+	}
+
+	// Add query parameters
+	q := req.URL.Query()
+	for _, routeID := range routeIDs {
+		q.Add("RouteIds", fmt.Sprintf("%d", routeID))
+	}
+	req.URL.RawQuery = q.Encode()
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error making request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response: %v", err)
+	}
+
+	return body, nil
+}
+
+func (c *futabusClient) getBookingStops(routeID int, wayID int) ([]byte, error) {
+	endpoint := fmt.Sprintf("https://api-busline.vato.vn/api/buslines/futa/booking/stops/%d", routeID)
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %v", err)
+	}
+
+	// Add query parameters
+	q := req.URL.Query()
+	q.Add("wayId", fmt.Sprintf("%d", wayID))
+	req.URL.RawQuery = q.Encode()
+
+	// Add headers
+	req.Header.Set("token_type", "anonymous")
+	req.Header.Set("x-access-token", c.getToken())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error making request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response: %v", err)
+	}
+
+	return body, nil
+}
+
+func (c *futabusClient) getBookingSeats(routeID int, tripID int, departureDate, departureTime, kind string) ([]byte, error) {
+	endpoint := fmt.Sprintf("https://api-busline.vato.vn/api/buslines/futa/booking/seats/%d/%d", routeID, tripID)
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %v", err)
+	}
+
+	// Add query parameters
+	q := req.URL.Query()
+	q.Add("departureDate", departureDate)
+	q.Add("departureTime", departureTime)
+	q.Add("kind", kind)
+	req.URL.RawQuery = q.Encode()
+
+	// Add headers
+	req.Header.Set("token_type", "anonymous")
+	req.Header.Set("x-access-token", c.getToken())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error making request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response: %v", err)
+	}
+
+	return body, nil
+}
+
 func main() {
 	server := NewMCPServer()
 	if err := server.Run(); err != nil {
