@@ -417,11 +417,11 @@ func main() {
 	server := NewMCPServer()
 
 	if *httpAddr != "" {
-		go func() {
-			if err := server.RunHTTP(*httpAddr); err != nil {
-				fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
-			}
-		}()
+		if err := server.RunHTTP(*httpAddr); err != nil {
+			fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	if err := server.Run(); err != nil {
