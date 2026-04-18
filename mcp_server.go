@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
-	"time"
+	"strings"
 )
 
 type MCPServer struct {
@@ -77,96 +79,94 @@ func (s *MCPServer) handleInitialize(req MCPRequest) MCPResponse {
 func (s *MCPServer) handleToolsList(req MCPRequest) MCPResponse {
 	tools := []map[string]interface{}{
 		{
-			"name":        "get_origin_codes",
-			"description": "Get all available origin codes for bus routes",
-			"inputSchema": map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-			},
-		},
-		{
-			"name":        "get_routes",
-			"description": "Get routes between origin and destination",
+			"name":        "search_pickup_points",
+			"description": "Search for pickup point groups and areas by keyword (city or province name)",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"originCode": map[string]string{"type": "string", "description": "Origin code"},
-					"destCode":   map[string]string{"type": "string", "description": "Destination code"},
-					"fromId":     map[string]string{"type": "integer", "description": "Id of origin office"},
-					"toId":       map[string]string{"type": "integer", "description": "Id of destination office"},
+					"keyword": map[string]string{
+						"type":        "string",
+						"description": "Search keyword, e.g. city or province name",
+					},
 				},
-				"required": []string{"originCode", "destCode", "fromId", "toId"},
+				"required": []string{"keyword"},
+			},
+		},
+		{
+			"name":        "search_routes",
+			"description": "Search available routes between two areas on a given date. Use search_pickup_points first to get area IDs.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"originAreaId": map[string]string{
+						"type":        "string",
+						"description": "Area ID of the origin (from search_pickup_points)",
+					},
+					"destAreaId": map[string]string{
+						"type":        "string",
+						"description": "Area ID of the destination (from search_pickup_points)",
+					},
+					"fromDate": map[string]string{
+						"type":        "string",
+						"description": "Travel date in format YYYY-MM-DD",
+					},
+				},
+				"required": []string{"originAreaId", "destAreaId", "fromDate"},
 			},
 		},
 		{
 			"name":        "search_trips",
-			"description": "Search for available trips",
+			"description": "Search for available trips by route IDs and date range. Use search_routes first to get route IDs.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"routeIds": map[string]interface{}{"type": "array", "items": map[string]string{"type": "integer"}},
+					"routeIds": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]string{"type": "string"},
+						"description": "List of route IDs (from search_routes)",
+					},
 					"fromDate": map[string]string{
 						"type":        "string",
-						"description": "Start date and time in format YYYY-MM-DD HH:MM (e.g., 2024-01-01 08:00)",
+						"description": "Start date in format YYYY-MM-DD",
 					},
 					"toDate": map[string]string{
 						"type":        "string",
-						"description": "End date and time in format YYYY-MM-DD HH:MM (e.g., 2024-01-02 20:00)",
+						"description": "End date in format YYYY-MM-DD",
 					},
-					"ticketCount": map[string]string{"type": "integer", "description": "Number of tickets"},
-				},
-				"required": []string{"routeIds", "fromDate", "toDate", "ticketCount"},
-			},
-		},
-		{
-			"name":        "get_price_list",
-			"description": "Get minimum prices for routes within a date range",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"routeIds": map[string]interface{}{"type": "array", "items": map[string]string{"type": "integer"}},
-					"fromDate": map[string]string{"type": "string", "description": "Start date (MM-DD-YYYY)"},
-					"toDate":   map[string]string{"type": "string", "description": "End date (MM-DD-YYYY)"},
 				},
 				"required": []string{"routeIds", "fromDate", "toDate"},
 			},
 		},
 		{
-			"name":        "get_office_group",
-			"description": "Get office groups for specific routes",
+			"name":        "get_seat_diagram",
+			"description": "Get the seat diagram for a specific trip. Use search_trips first to get a trip ID.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"routeIds": map[string]interface{}{"type": "array", "items": map[string]string{"type": "integer"}},
+					"tripId": map[string]string{
+						"type":        "string",
+						"description": "Trip ID (from search_trips)",
+					},
 				},
-				"required": []string{"routeIds"},
+				"required": []string{"tripId"},
 			},
 		},
 		{
-			"name":        "get_booking_stops",
-			"description": "Get booking stops for a specific route",
+			"name":        "get_departments_in_way",
+			"description": "Get all pickup/dropoff stops for a way (direction) of a route. Use search_trips to get wayId and routeId.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"routeId": map[string]string{"type": "integer", "description": "Route ID"},
-					"wayId":   map[string]string{"type": "integer", "description": "Way ID"},
+					"wayId": map[string]string{
+						"type":        "string",
+						"description": "Way ID (from search_trips)",
+					},
+					"routeId": map[string]string{
+						"type":        "string",
+						"description": "Route ID (from search_trips or search_routes)",
+					},
 				},
-				"required": []string{"routeId", "wayId"},
-			},
-		},
-		{
-			"name":        "get_booking_seats",
-			"description": "Get available seats for a specific trip",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"routeId":       map[string]string{"type": "integer", "description": "Route ID"},
-					"tripId":        map[string]string{"type": "integer", "description": "Trip ID"},
-					"departureDate": map[string]string{"type": "string", "description": "Departure date"},
-					"departureTime": map[string]string{"type": "string", "description": "Departure time"},
-					"kind":          map[string]string{"type": "string", "description": "Kind of booking"},
-				},
-				"required": []string{"routeId", "tripId", "departureDate", "departureTime", "kind"},
+				"required": []string{"wayId", "routeId"},
 			},
 		},
 	}
@@ -194,21 +194,19 @@ func (s *MCPServer) handleToolsCall(req MCPRequest) MCPResponse {
 		}
 	}
 
+	ctx := context.Background()
+
 	switch params.Name {
-	case "get_origin_codes":
-		return s.callGetOriginCodes(req.ID)
-	case "get_routes":
-		return s.callGetRoutes(req.ID, params.Arguments)
+	case "search_pickup_points":
+		return s.callSearchPickupPoints(ctx, req.ID, params.Arguments)
+	case "search_routes":
+		return s.callSearchRoutes(ctx, req.ID, params.Arguments)
 	case "search_trips":
-		return s.callSearchTrips(req.ID, params.Arguments)
-	case "get_price_list":
-		return s.callGetPriceList(req.ID, params.Arguments)
-	case "get_office_group":
-		return s.callGetOfficeGroup(req.ID, params.Arguments)
-	case "get_booking_stops":
-		return s.callGetBookingStops(req.ID, params.Arguments)
-	case "get_booking_seats":
-		return s.callGetBookingSeats(req.ID, params.Arguments)
+		return s.callSearchTrips(ctx, req.ID, params.Arguments)
+	case "get_seat_diagram":
+		return s.callGetSeatDiagram(ctx, req.ID, params.Arguments)
+	case "get_departments_in_way":
+		return s.callGetDepartmentsInWay(ctx, req.ID, params.Arguments)
 	default:
 		return MCPResponse{
 			Jsonrpc: "2.0",
@@ -218,296 +216,150 @@ func (s *MCPServer) handleToolsCall(req MCPRequest) MCPResponse {
 	}
 }
 
-func (s *MCPServer) callGetOriginCodes(id interface{}) MCPResponse {
-	codes, err := s.client.getAllOriginCodes()
-	if err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32000, Message: err.Error()},
-		}
+// normalizeDate converts a date string in YYYY-MM-DD format to RFC3339 format
+// (YYYY-MM-DDT00:00:00Z). If the string already contains 'T', it is returned as-is.
+func normalizeDate(date string) string {
+	if len(date) == 10 {
+		return date + "T00:00:00Z"
 	}
+	return date
+}
 
+func textResult(id interface{}, text string) MCPResponse {
 	return MCPResponse{
 		Jsonrpc: "2.0",
 		ID:      id,
 		Result: map[string]interface{}{
 			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": fmt.Sprintf("%v", codes),
-				},
+				{"type": "text", "text": text},
 			},
 		},
 	}
 }
 
-func (s *MCPServer) callGetRoutes(id interface{}, args json.RawMessage) MCPResponse {
+func errorResult(id interface{}, err error) MCPResponse {
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      id,
+		Error:   &MCPError{Code: -32000, Message: err.Error()},
+	}
+}
+
+func invalidArgs(id interface{}) MCPResponse {
+	return MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      id,
+		Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
+	}
+}
+
+func (s *MCPServer) callSearchPickupPoints(ctx context.Context, id interface{}, args json.RawMessage) MCPResponse {
 	var params struct {
-		OriginCode string `json:"originCode"`
-		DestCode   string `json:"destCode"`
-		FromId     int    `json:"fromId"`
-		ToId       int    `json:"toId"`
+		Keyword string `json:"keyword"`
 	}
-
 	if err := json.Unmarshal(args, &params); err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
-		}
+		return invalidArgs(id)
 	}
 
-	result, err := s.client.getRoutes(getRouteRequest{
-		OriginCode: params.OriginCode,
-		DestCode:   params.DestCode,
-		FromId:     params.FromId,
-		ToId:       params.ToId,
-	})
-
+	groups, areas, err := s.client.SearchPickupPoints(ctx, params.Keyword)
 	if err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32000, Message: err.Error()},
-		}
+		return errorResult(id, err)
 	}
 
-	return MCPResponse{
-		Jsonrpc: "2.0",
-		ID:      id,
-		Result: map[string]interface{}{
-			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": string(result),
-				},
-			},
-		},
+	result := map[string]interface{}{
+		"pickupPointGroups": groups,
+		"areas":             areas,
 	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return errorResult(id, err)
+	}
+	return textResult(id, string(data))
 }
 
-func parseDateTime(dateStr string) (int64, error) {
-	layout := "2006-01-02 15:04"
-	t, err := time.Parse(layout, dateStr)
-	if err != nil {
-		return 0, err
-	}
-	return t.UnixMilli(), nil
-}
-
-func (s *MCPServer) callSearchTrips(id interface{}, args json.RawMessage) MCPResponse {
+func (s *MCPServer) callSearchRoutes(ctx context.Context, id interface{}, args json.RawMessage) MCPResponse {
 	var params struct {
-		RouteIds    []int  `json:"routeIds"`
-		FromDate    string `json:"fromDate"`
-		ToDate      string `json:"toDate"`
-		TicketCount int    `json:"ticketCount"`
+		OriginAreaID string `json:"originAreaId"`
+		DestAreaID   string `json:"destAreaId"`
+		FromDate     string `json:"fromDate"`
 	}
-
 	if err := json.Unmarshal(args, &params); err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
-		}
+		return invalidArgs(id)
 	}
 
-	// Parse date strings to timestamps
-	fromTime, err := parseDateTime(params.FromDate)
+	routes, err := s.client.SearchRoutes(ctx, params.OriginAreaID, params.DestAreaID, normalizeDate(params.FromDate))
 	if err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32602, Message: fmt.Sprintf("Invalid fromDate format: %v", err)},
-		}
+		return errorResult(id, err)
 	}
 
-	toTime, err := parseDateTime(params.ToDate)
+	data, err := json.Marshal(routes)
 	if err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32602, Message: fmt.Sprintf("Invalid toDate format: %v", err)},
-		}
+		return errorResult(id, err)
 	}
-
-	result, err := s.client.searchTrips(params.RouteIds, fromTime, toTime, params.TicketCount)
-
-	if err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32000, Message: err.Error()},
-		}
-	}
-
-	return MCPResponse{
-		Jsonrpc: "2.0",
-		ID:      id,
-		Result: map[string]interface{}{
-			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": string(result),
-				},
-			},
-		},
-	}
+	return textResult(id, string(data))
 }
 
-func (s *MCPServer) callGetPriceList(id interface{}, args json.RawMessage) MCPResponse {
+func (s *MCPServer) callSearchTrips(ctx context.Context, id interface{}, args json.RawMessage) MCPResponse {
 	var params struct {
-		RouteIds []int  `json:"routeIds"`
-		FromDate string `json:"fromDate"`
-		ToDate   string `json:"toDate"`
+		RouteIDs []string `json:"routeIds"`
+		FromDate string   `json:"fromDate"`
+		ToDate   string   `json:"toDate"`
 	}
-
 	if err := json.Unmarshal(args, &params); err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
-		}
+		return invalidArgs(id)
 	}
 
-	result, err := s.client.getPriceListByRoutes(params.RouteIds, params.FromDate, params.ToDate)
-
+	trips, err := s.client.SearchTripsByRoute(ctx, params.RouteIDs, normalizeDate(params.FromDate), normalizeDate(params.ToDate))
 	if err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32000, Message: err.Error()},
-		}
+		return errorResult(id, err)
 	}
 
-	return MCPResponse{
-		Jsonrpc: "2.0",
-		ID:      id,
-		Result: map[string]interface{}{
-			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": string(result),
-				},
-			},
-		},
+	data, err := json.Marshal(trips)
+	if err != nil {
+		return errorResult(id, err)
 	}
+	return textResult(id, string(data))
 }
 
-func (s *MCPServer) callGetOfficeGroup(id interface{}, args json.RawMessage) MCPResponse {
+func (s *MCPServer) callGetSeatDiagram(ctx context.Context, id interface{}, args json.RawMessage) MCPResponse {
 	var params struct {
-		RouteIds []int `json:"routeIds"`
+		TripID string `json:"tripId"`
 	}
-
 	if err := json.Unmarshal(args, &params); err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
-		}
+		return invalidArgs(id)
 	}
 
-	result, err := s.client.getOfficeGroupByRoutes(params.RouteIds)
-
+	seats, err := s.client.GetSeatDiagram(ctx, params.TripID)
 	if err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32000, Message: err.Error()},
-		}
+		return errorResult(id, err)
 	}
 
-	return MCPResponse{
-		Jsonrpc: "2.0",
-		ID:      id,
-		Result: map[string]interface{}{
-			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": string(result),
-				},
-			},
-		},
+	data, err := json.Marshal(seats)
+	if err != nil {
+		return errorResult(id, err)
 	}
+	return textResult(id, string(data))
 }
 
-func (s *MCPServer) callGetBookingStops(id interface{}, args json.RawMessage) MCPResponse {
+func (s *MCPServer) callGetDepartmentsInWay(ctx context.Context, id interface{}, args json.RawMessage) MCPResponse {
 	var params struct {
-		RouteId int `json:"routeId"`
-		WayId   int `json:"wayId"`
+		WayID   string `json:"wayId"`
+		RouteID string `json:"routeId"`
 	}
-
 	if err := json.Unmarshal(args, &params); err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
-		}
+		return invalidArgs(id)
 	}
 
-	result, err := s.client.getBookingStops(params.RouteId, params.WayId)
-
+	depts, err := s.client.GetDepartmentsInWay(ctx, params.WayID, params.RouteID)
 	if err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32000, Message: err.Error()},
-		}
+		return errorResult(id, err)
 	}
 
-	return MCPResponse{
-		Jsonrpc: "2.0",
-		ID:      id,
-		Result: map[string]interface{}{
-			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": string(result),
-				},
-			},
-		},
-	}
-}
-
-func (s *MCPServer) callGetBookingSeats(id interface{}, args json.RawMessage) MCPResponse {
-	var params struct {
-		RouteId       int    `json:"routeId"`
-		TripId        int    `json:"tripId"`
-		DepartureDate string `json:"departureDate"`
-		DepartureTime string `json:"departureTime"`
-		Kind          string `json:"kind"`
-	}
-
-	if err := json.Unmarshal(args, &params); err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32602, Message: "Invalid arguments"},
-		}
-	}
-
-	result, err := s.client.getBookingSeats(params.RouteId, params.TripId, params.DepartureDate, params.DepartureTime, params.Kind)
-
+	data, err := json.Marshal(depts)
 	if err != nil {
-		return MCPResponse{
-			Jsonrpc: "2.0",
-			ID:      id,
-			Error:   &MCPError{Code: -32000, Message: err.Error()},
-		}
+		return errorResult(id, err)
 	}
-
-	return MCPResponse{
-		Jsonrpc: "2.0",
-		ID:      id,
-		Result: map[string]interface{}{
-			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": string(result),
-				},
-			},
-		},
-	}
+	return textResult(id, string(data))
 }
 
 func (s *MCPServer) Run() error {
@@ -527,5 +379,61 @@ func (s *MCPServer) Run() error {
 		if err := encoder.Encode(resp); err != nil {
 			return fmt.Errorf("error encoding response: %v", err)
 		}
+	}
+}
+
+// RunHTTP starts an HTTP Streamable MCP server on the given address.
+// Clients send JSON-RPC requests via POST /mcp.
+// If the client sends Accept: text/event-stream, responses are wrapped in SSE.
+// GET /mcp keeps an SSE connection open for server-initiated messages.
+func (s *MCPServer) RunHTTP(addr string) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mcp", s.mcpHTTPHandler)
+	fmt.Fprintf(os.Stderr, "HTTP Streamable MCP listening on %s/mcp\n", addr)
+	return http.ListenAndServe(addr, mux)
+}
+
+func (s *MCPServer) mcpHTTPHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
+
+	switch r.Method {
+	case http.MethodOptions:
+		w.WriteHeader(http.StatusNoContent)
+
+	case http.MethodPost:
+		var req MCPRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+		resp := s.handleRequest(req)
+
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			data, _ := json.Marshal(resp)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+		}
+
+	case http.MethodGet:
+		// SSE stream for server-initiated messages; keep open until client disconnects.
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-r.Context().Done()
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
