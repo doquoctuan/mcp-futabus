@@ -1,0 +1,15 @@
+name: Build And Push Arm64 Images
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write   # required for the CI workflow to create semver git tags
+
+jobs:
+  build-and-push:
+    uses: tuncloud/workflow/.github/workflows/ci-build-push.yml@main
+    with:
+      deployment-name: mcp-futabus

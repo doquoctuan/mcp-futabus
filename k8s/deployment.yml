@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-futabus
+  labels:
+    app: mcp-futabus
+spec:
+  type: ClusterIP
+  selector:
+    app: mcp-futabus
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-futabus
+  labels:
+    app: mcp-futabus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-futabus
+  template:
+    metadata:
+      labels:
+        app: mcp-futabus
+    spec:
+      containers:
+        - name: mcp-futabus
+          image: tuandoquoc/mcp-futabus:d342920de6a3749b9e85379aa62ba1aa67f95ba2
+          imagePullPolicy: IfNotPresent
+          args: ["--http", ":8080"]
+          ports:
+            - containerPort: 8080
+              name: http
