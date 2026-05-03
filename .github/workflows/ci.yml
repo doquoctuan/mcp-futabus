@@ -13,6 +13,9 @@ jobs:
     uses: tuncloud/workflow/.github/workflows/ci-build-push.yml@main
     with:
       deployment-name: mcp-futabus
+      notify: true
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
