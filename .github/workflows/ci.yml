@@ -13,3 +13,6 @@ jobs:
     uses: tuncloud/workflow/.github/workflows/ci-build-push.yml@main
     with:
       deployment-name: mcp-futabus
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
